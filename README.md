@@ -54,7 +54,6 @@ src/main/java/com/tomato/lib/
   ShareProvider.java         content:// 文件 Provider
 src/main/res/                图标与基础资源
 docs-design-system.txt       UI 设计令牌
-README-提示词.md             AI 接手须知（业务背景与技术约束）
 CHANGELOG.md                 历次变更
 ```
 
@@ -69,26 +68,13 @@ CHANGELOG.md                 历次变更
 
 当前发行版 **v1.6.8**（versionCode 27）。历史变更见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 开源协议与"开源等级"
+## 许可证
 
-本仓库采用 **Apache License 2.0**，属于**宽松型（Permissive）开源协议**中的"署名保留型"：
+Apache License 2.0（宽松型 / Permissive 开源，带强制署名条款）。可以商用、修改、闭源再发布；使用或参考了本项目代码，请注明来源：
 
-| 维度 | 本项目的规则 |
-| --- | --- |
-| 能否商用 | 可以 |
-| 能否修改后再闭源发布 | 可以（修改过的文件需显著说明改了什么） |
-| 是否要求开源衍生代码 | **不要求**（不是 GPL/AGPL 那种传染式 copyleft） |
-| 是否要求署名 | **要求**：使用或参考了本项目的代码/实现，必须在 README、关于页或源文件头标注来源与仓库链接 |
-| 是否提供专利授权 | 提供（Apache-2.0 自带专利许可条款，比 MIT 更稳） |
+> 部分代码或实现参考自 番茄书库 TomatoLib — https://github.com/gaigebeckmanChristinaJames/TomatoLib
 
-一句话：**宽松型 + 强制署名**。你可以拿去改、拿去发布（包括商用、闭源），但不能装作是自己从零写的——引用或参考了就得写清出处。
-
-为什么不选另外几种常见协议：
-- **MIT**：同样宽松，但只要求保留版权声明，对"参考了思路"约束很弱；
-- **GPL-3.0 / AGPL-3.0**：强 copyleft，会要求你的衍生作品也开源，和"别人自由使用"冲突；
-- **CC BY 4.0**：偏内容/文档许可，用在软件代码上会带来专利与分发条款的空白。
-
-如果你确实要"连参考思路都必须声明"，Apache-2.0 的署名条款只管衍生作品；对"只参考未复制"的情况，靠的是上面 NOTICE 里的社区约定（README 标注出处），法律上无法强制。
+细节见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
 ## 说明
 
