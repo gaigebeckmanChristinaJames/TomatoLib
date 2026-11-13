@@ -67,7 +67,7 @@ JAVAC=<JDK17>/bin/javac
 ```
 
 - 版本号三处已同步：`AndroidManifest.xml`（`versionCode=5`、`versionName=1.4.0`）、`build.sh` 的 `VER=1.4.0`、`index.html` 顶栏徽章；
-- 签名沿用包内 `keystore.jks`（alias `tomato`，密码 `tomato123`），可直接覆盖安装 v1.2.0；
+- 签名沿用同一 `keystore.jks`（alias `tomato`），可直接覆盖安装 v1.2.0；
 - 仍无任何 Android 权限声明，读 `/data/data` 走 root，正文解密同样走已探测的 su 策略。
 
 ---
@@ -139,7 +139,7 @@ JAVAC=<JDK17>/bin/javac
 ### 3. 顺带确认的结构事实
 
 章节文件名不是时间戳，而是 **`javaHash(chapter_id)`**：
-`hash("7666965686261924414") = 1657237934`（无符号），与该章文件名 `1657237934` 完全一致，已本机验证。
+`hash("<chapter_id>") = <file_stem>`（无符号），与该章文件名 `<file_stem>` 完全一致，已本机验证。
 
 ---
 
@@ -153,7 +153,7 @@ JAVAC=<JDK17>/bin/javac
 - **明文**：gzip（`1f 8b 08`）→ `<header></header><article><h1 class="chapterTitle1"…` 的 HTML；
 - **密钥表**：`prefix_public_crypt_key_kv_<uid>` 里 `key_918808644` = `692C4A9941E84DACABD789C2921EC898`；
 - **覆盖率**：391/394 章全部解开，剩下 3 个文件是 Java 序列化缓存（目录/书籍信息），不是章节；
-- **文件名**：`javaHash(chapter_id)`（有符号十进制，可负），例如 `hash("7666965686261924414") = 1657237934`。
+- **文件名**：`javaHash(chapter_id)`（有符号十进制，可负），例如 `hash("<chapter_id>") = <file_stem>`。
 
 ### 2. 之前为什么一直不命中（三个 bug 叠加）
 

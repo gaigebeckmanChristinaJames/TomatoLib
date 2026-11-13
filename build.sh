@@ -26,7 +26,8 @@ cp $OUT/base.apk $OUT/unsigned.apk
 (cd $OUT/dex && zip -q -X ../unsigned.apk classes.dex)
 
 $BT/zipalign -f -p 4 $OUT/unsigned.apk $OUT/aligned.apk
-$BT/apksigner sign --ks ${KS:-keystore.jks} --ks-pass ${KSPASS:-pass:tomato123} --key-pass ${KEYPASS:-pass:tomato123} \
+: "${KSPASS:?先设置 KSPASS=pass:你的口令}"; : "${KEYPASS:=$KSPASS}"
+$BT/apksigner sign --ks "${KS:-keystore.jks}" --ks-pass "$KSPASS" --key-pass "$KEYPASS" \
   --out $APK $OUT/aligned.apk
 $BT/apksigner verify --print-certs $APK | head -3
 ls -l $APK

@@ -32,10 +32,11 @@ export JAVAC=$HOME/opt/jdk-17/bin/javac
 
 # 签名需要自己的 keystore（仓库内不附带）
 keytool -genkeypair -keystore keystore.jks -alias tomato \
-  -storepass tomato123 -keypass tomato123 -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass <你的口令> -keypass <你的口令> -keyalg RSA -keysize 2048 -validity 10000 \
   -dname "CN=TomatoPure"
 
-bash build.sh          # 产出 TomatoLib-v<VER>.apk
+export KSPASS=pass:<你的口令>   # 与 keytool 里设置的一致
+bash build.sh                  # 产出 TomatoLib-v<VER>.apk
 ```
 
 `build.sh` 里 `VER` 与 `src/main/AndroidManifest.xml` 的 `versionCode` / `versionName`、以及 `assets/webui/index.html` 里的版本徽章需要一起改。
@@ -53,7 +54,6 @@ src/main/java/com/tomato/lib/
   Root.java                  su 调用封装
   ShareProvider.java         content:// 文件 Provider
 src/main/res/                图标与基础资源
-docs-design-system.txt       UI 设计令牌
 CHANGELOG.md                 历次变更
 ```
 

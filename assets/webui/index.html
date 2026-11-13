@@ -361,9 +361,6 @@ pre.code{margin:12px 0 0;padding:12px;background:var(--muted);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 #reader .rd-body{font-family:var(--rd-font)}
-#rdCanvas{position:absolute;inset:0;z-index:1;display:none;touch-action:none}
-#reader[data-mode="sim"] #rdCanvas{display:block}
-#reader[data-mode="sim"] .rd-scroll{visibility:hidden}
 
 /* 亮度 / 护眼遮罩 */
 #rdDim{position:absolute;inset:0;background:#000;pointer-events:none;z-index:2;
@@ -960,7 +957,6 @@ html.light .ic-sun{display:block}
   <div class="rd-scroll" id="rdScroll">
     <div class="rd-body" id="rdBody"></div>
   </div>
-  <canvas id="rdCanvas"></canvas>
 
   <div class="rd-scrub" id="rdScrub"></div>
   <div class="rd-line"><i id="rdProgBar"></i></div>
@@ -1808,7 +1804,7 @@ try { RD_WARM = localStorage.getItem('tl_rdwarm') === '1'; } catch (e) {}
 try { RD_AUTO_SPEED = localStorage.getItem('tl_rdspeed') || 'mid'; } catch (e) {}
 try {
   var m0 = localStorage.getItem('tl_rdmode');
-  if (m0 === 'page') m0 = 'sim';
+  if (m0 === 'page' || m0 === 'sim') m0 = 'chapter';
   if (m0 === 'scroll' || m0 === 'chapter') RD_MODE = m0;
 } catch (e) {}
 var RD_CB = {};                  // 追加章节的解密回调
@@ -2026,13 +2022,6 @@ function rdAutoStart() {
     }, cfg.sec * 1000);
     return;
   }
-  if (RD_MODE === 'sim') {
-    RD_AUTO_T = setInterval(function () {
-      if (!RD_AUTO || !RD) { rdAutoStop(); return; }
-      simTurn(1);
-    }, cfg.sec * 1000);
-    return;
-  }
   var last = 0, acc = 0;
   var loop = function (ts) {
     if (!RD_AUTO || !RD) { rdAutoStop(); return; }
@@ -2130,7 +2119,6 @@ function rdReflow() {
   RD_REFLOW_T = setTimeout(function () {
     if (!RD) return;
     var o = DEC[decKey(RD.dir, RD.f)];
-    if (RD_MODE === 'sim') { simBuild(o, SIM.cur); return; }
     var sc = el('rdScroll');
     var ratio = (sc && sc.scrollHeight > 8) ? sc.scrollTop / sc.scrollHeight : 0;
     rdShowDec(o || {loading: true});
@@ -2199,13 +2187,25 @@ function rdStats(text) {
     ' · 约 ' + mins + ' 分钟'};
 }
 
+function rdProg() {
+  var bar = el('rdProgBar');
+  if (!bar) return;
+  var p = 0;
+  if (RD_MODE === 'scroll') {
+    var sc = el('rdScroll');
+    if (sc && sc.scrollHeight > sc.clientHeight) {
+      p = sc.scrollTop / (sc.scrollHeight - sc.clientHeight);
+    }
+  } else if (RD) {
+    p = (RD.i + 1) / Math.max(1, RD.total || 1);
+  }
+  p = Math.max(0, Math.min(1, p || 0));
+  bar.style.width = (p * 100).toFixed(1) + '%';
+}
+
 function rdShowDec(o) {
   if (!RD || !el('rdBody')) return;
   if (RD_MODE === 'scroll') return rdShowScroll(o);
-  if (RD_MODE === 'sim') {
-    var st0 = RD_SIM_START; RD_SIM_START = null;
-    return simBuild(o, st0 || 0);
-  }
   var ch = RD.ch || {};
   var name = ch.name || ('第 ' + (RD.i + 1) + ' 章');
   var head = '<div class="rd-head"><h2>' + esc(name) + '</h2></div>';
@@ -2419,510 +2419,6 @@ function rdDetails() {
 }
 
 
-
-/* ================= 仿真翻页：Canvas 卷页 ================= */
-var SIM = {pages: [], cur: 0, W: 0, H: 0, dpr: 1, top: 62, bot: 0, left: 22, right: 0,
-           cache: {}};
-var SIM_ANIM = 0;
-var RD_SIM_START = null;
-
-function simPalette() {
-  var cs = getComputedStyle(el('reader'));
-  var bs = getComputedStyle(el('rdBody'));
-  return {
-    bg: (cs.getPropertyValue('--rd-bg') || '#0d0d0f').trim(),
-    fg: bs.color || '#c7c7cb',
-    bd: (cs.getPropertyValue('--rd-bd') || '#333').trim(),
-    fam: bs.fontFamily || 'sans-serif'
-  };
-}
-function simRGBA(hex, a) {
-  hex = (hex || '').trim();
-  if (hex.charAt(0) === '#') {
-    var h = hex.slice(1);
-    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
-    var n = parseInt(h, 16);
-    return 'rgba(' + ((n>>16)&255) + ',' + ((n>>8)&255) + ',' + (n&255) + ',' + a + ')';
-  }
-  if (hex.indexOf('rgb') === 0) return hex.replace(/\)$/, ',' + a + ')').replace('rgb(', 'rgba(');
-  return 'rgba(0,0,0,' + a + ')';
-}
-
-function simBuild(o, keep) {
-  var r = el('reader'), cv = el('rdCanvas');
-  if (!r || !cv) return;
-  var W = r.clientWidth, H = r.clientHeight;
-  if (!W || !H) { requestAnimationFrame(function () { simBuild(o, keep); }); return; }
-  SIM.W = W; SIM.H = H; SIM.dpr = Math.min(2, window.devicePixelRatio || 1);
-  cv.width = Math.round(W * SIM.dpr); cv.height = Math.round(H * SIM.dpr);
-  cv.style.width = W + 'px'; cv.style.height = H + 'px';
-  SIM.left = 22; SIM.right = W - 22; SIM.top = 68; SIM.bot = H - 26;
-  SIM.cache = {};
-  simBind();
-
-  if (!(o && o.okDecrypt && o.text)) {
-    SIM.pages = [{fail: true}];
-    SIM.cur = 0; simPaint(0, 1); simProg(); return;
-  }
-  var pal = simPalette();
-  var fs = RD_FS, lh = Math.max(fs + 6, Math.round(fs * RD_LH));
-  var mctx = document.createElement('canvas').getContext('2d');
-  mctx.font = fs + 'px ' + pal.fam;
-  var avail = SIM.right - SIM.left;
-  var paras = stripHtml(o.text).split(/\n+/).map(function (t) { return t.trim(); })
-    .filter(function (t) { return t; });
-  var nm = ((RD.ch && RD.ch.name) || '').replace(/\s+/g, '');
-  while (paras.length && paras[0].replace(/\s+/g, '') === nm) paras.shift();
-
-  // 章标题：大号粗体 + 上下虚线，和正文左对齐
-  var tSize = fs + 5, tLh = Math.round(tSize * 1.5);
-  var title = (RD.ch && RD.ch.name) || ('第 ' + (RD.i + 1) + ' 章');
-  mctx.font = '800 ' + tSize + 'px ' + pal.fam;
-  var tl = [], trest = title;
-  while (trest.length && tl.length < 3) {
-    var tlo = 1, thi = trest.length, tbest = 1;
-    while (tlo <= thi) {
-      var tm = (tlo + thi) >> 1;
-      if (mctx.measureText(trest.slice(0, tm)).width <= avail) { tbest = tm; tlo = tm + 1; }
-      else thi = tm - 1;
-    }
-    tl.push(trest.slice(0, tbest)); trest = trest.slice(tbest);
-  }
-  mctx.font = fs + 'px ' + pal.fam;
-
-  var pages = [], lines = [], y = SIM.top + 4;
-  function flush() { pages.push(lines); lines = []; y = SIM.top + 4; }
-  function put(text, ind, size, bold, adv) {
-    if (y + size > SIM.bot) flush();
-    lines.push({t: text, ind: ind, y: y + Math.round(size * 0.92), size: size, bold: bold});
-    y += adv;
-  }
-  tl.forEach(function (t) { put(t, 0, tSize, true, tLh); });
-  lines.push({rule: true, y: y + 2});
-  y += 24;
-
-  for (var pi = 0; pi < paras.length; pi++) {
-    var rest = paras[pi], first = true;
-    while (rest.length) {
-      var ind = first ? fs * 2 : 0, limit = avail - ind;
-      var lo = 1, hi = rest.length, best = 1;
-      while (lo <= hi) {
-        var mid = (lo + hi) >> 1;
-        if (mctx.measureText(rest.slice(0, mid)).width <= limit) { best = mid; lo = mid + 1; }
-        else { hi = mid - 1; }
-      }
-      if (best < 1) best = 1;
-      put(rest.slice(0, best), ind, fs, false, lh);
-      rest = rest.slice(best); first = false;
-    }
-    y += Math.round(lh * 0.8);
-    if (y > SIM.bot) flush();
-  }
-  if (lines.length) pages.push(lines);
-  SIM.pages = pages.length ? pages : [[]];
-
-  if (keep === 'last') SIM.cur = SIM.pages.length - 1;
-  else if (keep === 'first' || keep === 0 || keep === undefined) SIM.cur = 0;
-  else SIM.cur = Math.max(0, Math.min(SIM.pages.length - 1, keep));
-  simPaint(0, 1);
-  simProg();
-}
-
-function simPageCanvas(page, idx) {
-  var key = 'p' + idx;
-  if (SIM.cache[key]) return SIM.cache[key];
-  var W = SIM.W, H = SIM.H, dpr = SIM.dpr;
-  var cv = document.createElement('canvas');
-  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-  var c = cv.getContext('2d');
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  var pal = simPalette(), fs = RD_FS;
-  var lh = Math.max(fs + 6, Math.round(fs * RD_LH));
-  c.fillStyle = pal.bg; c.fillRect(0, 0, W, H);
-  c.fillStyle = pal.fg; c.textBaseline = 'alphabetic';
-  c.font = fs + 'px ' + pal.fam;
-  if (page && page.fail) {
-    c.font = '13px ' + pal.fam;
-    c.fillText('本页正文未能解密，点「重试」', SIM.left, SIM.top + 40);
-  } else if (page) {
-    for (var i = 0; i < page.length; i++) {
-      var ln = page[i];
-      if (ln.rule) {
-        c.strokeStyle = pal.bd;
-        c.lineWidth = 1;
-        try { c.setLineDash([4, 4]); } catch (e) {}
-        c.beginPath();
-        c.moveTo(SIM.left, ln.y - 6); c.lineTo(SIM.right, ln.y - 6);
-        c.stroke();
-        try { c.setLineDash([]); } catch (e) {}
-        continue;
-      }
-      c.font = (ln.bold ? '800 ' : '') + ln.size + 'px ' + pal.fam;
-      c.fillText(ln.t, SIM.left + ln.ind, ln.y);
-    }
-  }
-  SIM.cache[key] = cv;
-  return cv;
-}
-
-function simPaint(p, dir) {
-  var cv = el('rdCanvas');
-  if (!cv || !SIM.W) return;
-  var ctx = cv.getContext('2d'), W = SIM.W, H = SIM.H;
-  ctx.setTransform(SIM.dpr, 0, 0, SIM.dpr, 0, 0);
-  var pal = simPalette();
-  ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, W, H);
-  var cur = SIM.pages[SIM.cur];
-  if (!cur && !SIM.pages.length) return;
-
-  if (dir < 0) {
-    // 回翻：上一页从左边拉回来，宽度随拖拽增长
-    ctx.drawImage(simPageCanvas(cur, SIM.cur), 0, 0, W, H);
-    if (p > 0.001 && SIM.cur > 0) {
-      var pw = Math.max(1, W * p);
-      ctx.drawImage(simPageCanvas(SIM.pages[SIM.cur - 1], SIM.cur - 1), 0, 0, W, H, 0, 0, pw, H);
-      var g0 = ctx.createLinearGradient(pw - 34, 0, pw, 0);
-      g0.addColorStop(0, 'rgba(0,0,0,0)'); g0.addColorStop(1, 'rgba(0,0,0,.34)');
-      ctx.fillStyle = g0; ctx.fillRect(Math.max(0, pw - 34), 0, Math.min(34, pw), H);
-      ctx.fillStyle = 'rgba(0,0,0,.14)'; ctx.fillRect(Math.max(0, pw - 1.5), 0, 3, H);
-    }
-    return;
-  }
-
-  if (p <= 0.001) { ctx.drawImage(simPageCanvas(cur, SIM.cur), 0, 0, W, H); return; }
-
-  // 底层：下一页（章末没有下一页就露出纸色）
-  var nxt = SIM.cur + 1;
-  if (nxt < SIM.pages.length) {
-    ctx.drawImage(simPageCanvas(SIM.pages[nxt], nxt), 0, 0, W, H);
-  } else {
-    ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, W, H);
-  }
-
-  // 纸页绕装订边转出：投影宽度 W*(1-p)，落在下一页上的阴影先画
-  var w = Math.max(0.5, W * (1 - p));
-  var gd = ctx.createLinearGradient(w, 0, w + 28, 0);
-  gd.addColorStop(0, 'rgba(0,0,0,.30)'); gd.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = gd; ctx.fillRect(w, 0, Math.min(28, Math.max(0, W - w)), H);
-
-  // 翻起的这一面：整页横向压缩到 [0,w]，不做镜像，不会有重影
-  ctx.drawImage(simPageCanvas(cur, SIM.cur), 0, 0, W, H, 0, 0, w, H);
-
-  // 受光：折缝一侧渐暗，中间有一道细微高光
-  var gp = ctx.createLinearGradient(Math.max(0, w - 80), 0, w, 0);
-  gp.addColorStop(0, 'rgba(255,255,255,.05)');
-  gp.addColorStop(0.55, 'rgba(0,0,0,.03)');
-  gp.addColorStop(1, 'rgba(0,0,0,.24)');
-  ctx.fillStyle = gp; ctx.fillRect(Math.max(0, w - 80), 0, Math.min(80, w), H);
-
-  ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w, H); ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(w + 1.2, 0); ctx.lineTo(w + 1.2, H); ctx.stroke();
-}
-
-
-function simProg() {
-  if (!RD) return;
-  var bar = el('rdProgBar');
-  var per = SIM.pages.length ? (SIM.cur + 1) / SIM.pages.length : 1;
-  var pct = Math.min(100, Math.round(((RD.i + per) / Math.max(1, RD.total)) * 100));
-  if (bar) bar.style.width = pct + '%';
-  if (RD_MODE === 'sim') {
-    PROG[RD.bid] = {i: RD.i, total: RD.total,
-      name: (RD.ch && RD.ch.name) || ('第 ' + (RD.i + 1) + ' 章'), ts: Date.now()};
-    saveProg();
-  }
-}
-
-function simStopAnim() {
-  if (SIM_ANIM) { cancelAnimationFrame(SIM_ANIM); SIM_ANIM = 0; }
-}
-function simAnimate(from, dir, go, dur) {
-  simStopAnim();
-  var t0 = performance.now();
-  dur = dur || (go ? 300 : 220);
-  var target = go ? 1 : 0;
-  function step(now) {
-    var k = Math.min(1, (now - t0) / dur);
-    var e = 1 - Math.pow(1 - k, 3);
-    simPaint(from + (target - from) * e, dir);
-    if (k < 1) SIM_ANIM = requestAnimationFrame(step);
-    else { SIM_ANIM = 0; if (go) simCommit(dir); else simPaint(0, 1); }
-  }
-  SIM_ANIM = requestAnimationFrame(step);
-}
-function simCommit(dir) {
-  if (!RD) return;
-  if (dir > 0) {
-    if (SIM.cur < SIM.pages.length - 1) { SIM.cur++; simPaint(0, 1); simProg(); }
-    else if (RD.i < RD.total - 1) { RD_SIM_START = 'first'; rdStep(1); }
-    else { simPaint(0, 1); toast('已经是最后一章了'); }
-  } else {
-    if (SIM.cur > 0) { SIM.cur--; simPaint(0, 1); simProg(); }
-    else if (RD.i > 0) { RD_SIM_START = 'last'; rdStep(-1); }
-    else { simPaint(0, 1); }
-  }
-}
-function simTurn(d) { simAnimate(0, d, true); }
-
-var SIM_BOUND = false;
-function simBind() {
-  var cv = el('rdCanvas');
-  if (!cv || SIM_BOUND) return;
-  SIM_BOUND = true;
-  var sx = 0, sy = 0, st = 0, dir = 0, p = 0, moved = false;
-  cv.addEventListener('touchstart', function (e) {
-    var t = e.touches[0]; sx = t.clientX; sy = t.clientY; st = Date.now();
-    dir = 0; p = 0; moved = false; simStopAnim();
-  }, {passive: true});
-  cv.addEventListener('touchmove', function (e) {
-    var t = e.touches[0], dx = t.clientX - sx, dy = t.clientY - sy;
-    if (!dir) {
-      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.3) dir = dx < 0 ? 1 : -1;
-      else return;
-    }
-    if (dir > 0) p = Math.max(0, Math.min(1, -dx / (SIM.W * 0.92)));
-    else p = Math.max(0, Math.min(1, dx / (SIM.W * 0.92)));
-    if (p > 0.01) moved = true;
-    simPaint(p, dir);
-  }, {passive: true});
-  cv.addEventListener('touchend', function (e) {
-    if (!moved) {
-      var t = e.changedTouches[0], x = t.clientX;
-      if (x < SIM.W * 0.3) simTurn(-1);
-      else if (x > SIM.W * 0.7) simTurn(1);
-      else rdOpenSet();
-      return;
-    }
-    simAnimate(p, dir, p > 0.3 && Date.now() - st > 60);
-  }, {passive: true});
-}
-
-function rdProg() {
-  var s = el('rdScroll');
-  if (!s || !RD) return;
-  if (RD_MODE === 'sim') return simProg();
-  var scb = el('rdScrub');
-  if (scb) scb.classList.toggle('on', RD_MODE === 'scroll');
-
-  if (false) {
-    var step = rdPageStep();
-    var pg = Math.min(RD.pages || 1, Math.round(s.scrollLeft / step) + 1);
-    RD.page = pg;
-    if (el('rdPos')) el('rdPos').textContent = '第 ' + pg + ' 页';
-    if (el('rdPct')) el('rdPct').textContent = pg + ' / ' + (RD.pages || 1);
-    if (el('rdProgBar')) el('rdProgBar').style.width =
-      Math.round((pg / (RD.pages || 1)) * 100) + '%';
-    return;
-  }
-
-  if (RD_MODE === 'scroll') {
-    var segs = s.querySelectorAll('.rd-seg');
-    var idx = RD.i, top = s.scrollTop + 96;
-    for (var i = 0; i < segs.length; i++) {
-      if (segs[i].offsetTop <= top) idx = parseInt(segs[i].getAttribute('data-i'), 10);
-    }
-    var mx = s.scrollHeight - s.clientHeight;
-    var pc = mx > 4 ? Math.min(100, Math.round(s.scrollTop / mx * 100)) : 100;
-    if (el('rdPos')) el('rdPos').textContent = (idx + 1) + ' / ' + RD.total + ' 章';
-    if (el('rdPct')) el('rdPct').textContent = pc + '%';
-    if (el('rdProgBar')) el('rdProgBar').style.width = pc + '%';
-    if (idx !== RD.cur) {
-      RD.cur = idx;
-      var c = RD.list[idx];
-      PROG[RD.bid] = {i: idx, total: RD.total,
-                      name: (c && c.name) || ('第 ' + (idx + 1) + ' 章'), ts: Date.now()};
-      saveProg();
-    }
-    rdMaybeAppend();
-    return;
-  }
-
-  var max2 = s.scrollHeight - s.clientHeight;
-  var pct2 = max2 > 4 ? Math.min(100, Math.max(0, Math.round(s.scrollTop / max2 * 100))) : 100;
-  if (el('rdProgBar')) el('rdProgBar').style.width = pct2 + '%';
-  if (el('rdPct')) el('rdPct').textContent = pct2 + '%';
-}
-
-function closeReader() {
-  if (!RD) { el('reader').classList.remove('open'); return; }
-  el('reader').classList.remove('open');
-  el('reader').setAttribute('aria-hidden', 'true');
-  var pn = el('rdSet');
-  if (pn) pn.classList.remove('on');
-  el('rdScroll').scrollTop = 0;
-  RD_AUTO = false; rdAutoStop(); rdCloseSet();
-  RD = null;
-  renderOverview(); renderShelf(); renderSkin();
-}
-
-function markRead(bid, i) {
-  var b = findBook(bid);
-  var list = (CHAP[b.dir] && CHAP[b.dir].list) || [];
-  var ch = list[i];
-  PROG[bid] = {i: i, total: list.length, name: ch ? ch.name : ('第 ' + (i + 1) + ' 章'), ts: Date.now()};
-  saveProg();
-  renderOverview(); renderShelf(); renderSkin();
-  toast('已记录：' + (PROG[bid].name || ('第 ' + (i + 1) + ' 章')));
-  openBook(bid);
-}
-
-function b64utf8(str) {
-  try { return btoa(unescape(encodeURIComponent(str))); } catch (e) { return ''; }
-}
-
-/** 用已解密缓存拼出文档，交给原生写到 Download/番茄书库/导出 */
-function gatherDec(b) {
-  var list = (CHAP[b.dir] && CHAP[b.dir].list) || [];
-  var got = [], miss = 0;
-  list.forEach(function (c, i) {
-    var o = DEC[decKey(b.dir, c.f)];
-    var t = (o && o.okDecrypt && o.text) ? o.text : null;
-    if (!t && Native && Native.cacheGet) {
-      try { t = Native.cacheGet(b.dir, c.f) || null; } catch (e) {}
-    }
-    if (t) got.push({name: c.name || ('第 ' + (i + 1) + ' 章'), text: stripHtml(t)});
-    else miss++;
-  });
-  return {got: got, miss: miss};
-}
-
-function expBook(bid, fmt) {
-  var b = findBook(bid);
-  if (!b) return;
-  if (!Native || !Native.saveDoc) { toast('预览模式无法导出', true); return; }
-  var g = gatherDec(b), got = g.got, miss = g.miss;
-  if (!got.length) { toast('还没有已解密的章节，先翻几章再导出', true); return; }
-  var base = (b.name || b.bid).replace(/[\\/:*?"<>|]/g, '_');
-  var body, file, mime = 'text/plain';
-  if (fmt === 'md') {
-    body = '# ' + (b.name || b.bid) + '\n\n' +
-      got.map(function (c) { return '## ' + c.name + '\n\n' + c.text; }).join('\n\n');
-    file = base + '.md'; mime = 'text/markdown';
-  } else if (fmt === 'html') {
-    body = buildHtmlBook(b, got);
-    file = base + '.html'; mime = 'text/html';
-  } else if (fmt === 'json') {
-    body = JSON.stringify({book: {bid: b.bid, name: b.name, acc: b.acc,
-      chapters: b.chapters, sizeKb: b.sizeKb, dir: b.dir},
-      exported: got.length, chapters: got}, null, 2);
-    file = base + '.json'; mime = 'application/json';
-  } else {
-    body = '《' + (b.name || b.bid) + '》\n书 ID ' + b.bid + ' · 账号 ' + b.acc +
-      ' · 共 ' + (b.chapters || 0) + ' 章 · 已解密 ' + got.length + ' 章\n\n' +
-      got.map(function (c) { return c.name + '\n\n' + c.text; }).join('\n\n\n');
-    file = base + '.txt';
-  }
-  var b64 = b64utf8(body);
-  if (!b64) { toast('内容过大，导出失败', true); return; }
-  Native.saveDoc(file, b64);
-  toast('正在导出 ' + file + '（' + got.length + ' 章' +
-        (miss ? '，' + miss + ' 章未解密已跳过' : '') + '）');
-}
-
-/** 导出网页版：沿用阅读器的配色/字号/章标题样式，自带目录与章节跳转 */
-function buildHtmlBook(b, got) {
-  var bg = '#18181b', fg = '#e6e6e9', bd = '#3f3f46';
-  try {
-    var rs = getComputedStyle(el('reader') || document.documentElement);
-    var root = getComputedStyle(document.documentElement);
-    bg = (rs.getPropertyValue('--rd-bg') || root.getPropertyValue('--bg') || bg).trim() || bg;
-    fg = (rs.getPropertyValue('--rd-fg') || root.getPropertyValue('--fg') || fg).trim() || fg;
-    bd = (rs.getPropertyValue('--rd-bd') || root.getPropertyValue('--border') || bd).trim() || bd;
-  } catch (e) {}
-  var fam = 'serif';
-  try {
-    var bs = el('rdBody') ? getComputedStyle(el('rdBody')) : null;
-    if (bs && bs.fontFamily) fam = bs.fontFamily;
-  } catch (e) {}
-  var fs = RD_FS || 18;
-  var L = [];
-  L.push('<!doctype html>');
-  L.push('<html lang="zh-CN"><head><meta charset="utf-8">');
-  L.push('<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">');
-  L.push('<title>' + esc(b.name || b.bid) + '</title>');
-  L.push('<style>');
-  L.push(':root{--bg:' + bg + ';--fg:' + fg + ';--bd:' + bd + ';--fs:' + fs + 'px}');
-  L.push('*{box-sizing:border-box}');
-  L.push('html,body{margin:0;padding:0;background:var(--bg);color:var(--fg)}');
-  L.push('body{font-family:' + fam + ';font-size:var(--fs);line-height:1.9;' +
-         'padding:calc(56px + env(safe-area-inset-top)) 0 calc(40px + env(safe-area-inset-bottom))}');
-  L.push('.bar{position:fixed;left:0;right:0;top:0;z-index:9;display:flex;align-items:center;gap:10px;' +
-         'padding:calc(8px + env(safe-area-inset-top)) 14px 8px;background:var(--bg);' +
-         'border-bottom:1px solid var(--bd)}');
-  L.push('.bar .ttl{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}');
-  L.push('.bar button{font:inherit;font-size:13px;padding:7px 12px;border-radius:10px;' +
-         'border:1px solid var(--bd);background:transparent;color:var(--fg)}');
-  L.push('main{max-width:720px;margin:0 auto;padding:0 22px}');
-  L.push('.hd{padding:26px 0 18px;border-bottom:1px solid var(--bd);margin-bottom:6px}');
-  L.push('.hd h1{margin:0;font-size:26px;line-height:1.35;font-weight:800}');
-  L.push('.hd small{display:block;margin-top:8px;font-size:12px;opacity:.62;font-weight:400}');
-  L.push('section.ch{padding-top:26px;scroll-margin-top:64px}');
-  L.push('section.ch h2{margin:0 0 14px;padding-bottom:14px;font-size:calc(var(--fs) + 5px);' +
-         'font-weight:800;line-height:1.4;border-bottom:1px dashed var(--bd)}');
-  L.push('p{text-indent:2em;margin:0 0 .72em;text-align:justify}');
-  L.push('.toc{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.45);display:none}');
-  L.push('.toc.on{display:block}');
-  L.push('.toc-panel{position:absolute;left:0;right:0;bottom:0;max-height:80vh;overflow:auto;' +
-         'background:var(--bg);border-radius:16px 16px 0 0;padding:14px 0 calc(14px + env(safe-area-inset-bottom))}');
-  L.push('.toc-panel h4{margin:6px 20px 10px;font-size:13px;opacity:.6;font-weight:500}');
-  L.push('.toc-panel a{display:block;padding:11px 20px;color:var(--fg);text-decoration:none;font-size:13.5px;' +
-         'border-bottom:1px solid rgba(127,127,127,.14)}');
-  L.push('.toc-panel a.cur{font-weight:700}');
-  L.push('#top{position:fixed;right:14px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:8;' +
-         'width:40px;height:40px;border-radius:50%;border:1px solid var(--bd);background:var(--bg);' +
-         'color:var(--fg);font-size:16px;display:none}');
-  L.push('#top.on{display:block}');
-  L.push('</style></head><body>');
-  L.push('<div class="bar"><span class="ttl">' + esc(b.name || b.bid) + '</span>' +
-         '<button id="tocBtn">目录</button></div>');
-  L.push('<div class="toc" id="toc"><div class="toc-panel"><h4>共 ' + got.length + ' 章</h4>' +
-    got.map(function (c, i) {
-      return '<a href="#ch' + i + '" data-i="' + i + '">' + esc(c.name) + '</a>';
-    }).join('') + '</div></div>');
-  L.push('<main><div class="hd"><h1>' + esc(b.name || b.bid) + '</h1><small>' +
-         esc(b.acc === '_flat' ? '' : ('账号 ' + b.acc)) + ' · 共 ' + (b.chapters || got.length) +
-         ' 章 · 本文件含 ' + got.length + ' 章</small></div>');
-  got.forEach(function (c, i) {
-    L.push('<section class="ch" id="ch' + i + '"><h2>' + esc(c.name) + '</h2>' +
-      bodyParas(c.text, c.name).map(function (x) { return '<p>' + esc(x) + '</p>'; }).join('') +
-      '</section>');
-  });
-  L.push('</main><button id="top">↑</button>');
-  L.push('<script>');
-  L.push('var toc=document.getElementById("toc"),btn=document.getElementById("tocBtn"),btnTop=document.getElementById("top");');
-  L.push('btn.onclick=function(){toc.classList.add("on")};');
-  L.push('toc.onclick=function(e){if(e.target===toc)toc.classList.remove("on")};');
-  L.push('toc.querySelectorAll("a").forEach(function(a){a.onclick=function(){toc.classList.remove("on")}});');
-  L.push('addEventListener("scroll",function(){btnTop.classList.toggle("on",scrollY>400);' +
-         'var cur=0;document.querySelectorAll("section.ch").forEach(function(s,i){' +
-         'if(s.getBoundingClientRect().top<120)cur=i;});' +
-         'toc.querySelectorAll("a").forEach(function(a){a.classList.toggle("cur",+a.dataset.i===cur);});},{passive:true});');
-  L.push('btnTop.onclick=function(){scrollTo({top:0,behavior:"smooth"});};');
-  L.push('</'+'script></body></html>');
-  return L.join('\n');
-}
-
-window.onSaveDoc = function (msg) { toast(msg || '导出完成'); };
-
-function doExport(bid) {
-  var b = findBook(bid);
-  if (!b) return;
-  if (!Native) { toast('预览模式无法导出', true); return; }
-  var list = (CHAP[b.dir] && CHAP[b.dir].list) || [];
-  var txt = (b.name || b.bid) + '\n书 ID: ' + b.bid + '\n账号: ' + b.acc +
-    '\n章节数: ' + b.chapters + '\n目录: ' + b.dir + '\n\n' +
-    list.map(function (c, i) {
-      return (i + 1) + '. ' + (c.name || '') + '  [' + c.f + ']  ' + Math.round((c.size || 0) / 1024) + ' KB';
-    }).join('\n');
-  var b64 = '';
-  try { b64 = btoa(unescape(encodeURIComponent(txt))); } catch (e) {}
-  Native.export(b.dir, b.bid, b.name || '', b.chapters || 0, b64);
-  toast('正在导出到 Download/番茄书库…');
-}
-
-window.onExport = function (msg) { toast(msg || '导出完成'); };
 
 /* ================= 正文解密 ================= */
 /* ===== 解密缓存（IndexedDB 持久化，大退重进不重解） ===== */
